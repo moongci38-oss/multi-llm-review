@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "multi-llm-review",
+  "description": "Parallel adversarial code review by multiple LLMs for Claude Code.",
+  "owner": {
+    "name": "moongci38-oss",
+    "url": "https://github.com/moongci38-oss"
+  },
+  "plugins": [
+    {
+      "name": "multi-llm-review",
+      "description": "Claude + Gemini (default) or + Codex/GPT (opt-in) review your diff in parallel, then merge, dedup, and refute findings.",
+      "source": "./",
+      "category": "code-quality"
+    }
+  ]
+}

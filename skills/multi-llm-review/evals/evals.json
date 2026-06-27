@@ -1,0 +1,38 @@
+{
+  "skill_name": "multi-llm-review",
+  "note": "Dummy fixture — replace with real target paths for your project. Personal paths removed.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/review-double path/to/sample-plan.md",
+      "expected_output": "2 worker JSON results (primary + gemini) with Triage verdict",
+      "expectations": [
+        "primary worker returns {score, issues, summary}",
+        "gemini worker returns {score, issues, summary}",
+        "combined score computed (sonnet×0.35 + gemini×0.3 / 0.65)",
+        "CRITICAL issue present → combined verdict = FAIL",
+        "evidence JSON written to .multi-llm-review/reviews/{stage}/{slug}-multi-llm-review.json"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run /review-double on same file 3 times (all return score=60) then check plateau",
+      "expected_output": "PLATEAU log line emitted on 3rd run with delta < 5",
+      "expectations": [
+        "[PLATEAU] log line in workflow output",
+        "prevScore arg correctly passed between runs",
+        "delta < 5 condition triggered"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "/review-double path/to/file-with-secret.ts where file contains API_KEY=AKIA_FAKE_0000000",
+      "expected_output": "Secret detected before worker dispatch — review blocked",
+      "expectations": [
+        "Secret pattern detected pre-dispatch",
+        "No MCP tool calls to Gemini or Codex",
+        "Audit log records block event"
+      ]
+    }
+  ]
+}
