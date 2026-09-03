@@ -1,7 +1,7 @@
 {
   "name": "multi-llm-review",
   "displayName": "Multi-LLM Review",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Parallel adversarial code review by multiple LLMs — Claude + Gemini by default, add Codex/GPT for a 3-model panel. Weighted score merge, dedup with confidence scoring, plateau detection, completeness critic, and per-finding refutation.",
   "author": {
     "name": "moongci38-oss",
