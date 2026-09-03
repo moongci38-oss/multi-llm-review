@@ -9,9 +9,9 @@ A [Claude Code](https://code.claude.com) plugin. One model reviewing your diff h
 ```
 
 ```
-  Claude (Sonnet) ─┐
-  Gemini          ─┼─►  merge + dedup ─►  refute weak findings ─►  verdict (PASS / WARN / FAIL)
-  Codex / GPT     ─┘        (confidence)       (per-finding)
+  Claude (Fable 5.1) ─┐
+  Gemini             ─┼─►  merge + dedup ─►  refute weak findings ─►  verdict (PASS / WARN / FAIL)
+  Codex / GPT-5.6    ─┘        (confidence)       (per-finding)
 ```
 
 ## Why
@@ -24,6 +24,44 @@ A single reviewer — human or AI — misses what it isn't looking for. Differen
 - **Plateau detection** — stops looping when rounds stop finding anything new.
 - **Completeness critic** — a final pass asking "what did everyone miss?"
 - **Per-finding refutation** — each finding must survive a skeptic before it ships.
+- **A dead reviewer is not a bad review** — a leg that crashed, came back empty, or said it
+  could not run is dropped from the score instead of averaging in as a zero. Its findings
+  still count against the gate.
+- **A verdict you can weigh** — every result carries an `evidenceTier`
+  (`full` / `degraded` / `unverified`), so a PASS from one surviving reviewer is never
+  mistaken for a PASS from the full panel.
+- **Independence is checked, not assumed** — if the panel agrees on everything, that is
+  reported (`groupthink`) rather than counted as extra confidence.
+- **A panel of three that was secretly one** — when an external reviewer is blocked, the
+  quiet failure is for Claude to answer in its place and the report still to say "3 models".
+  Legs declare who actually ran; a mismatch caps the verdict. (Self-reported — it catches
+  misconfiguration, not a model that lies. We say so rather than overclaiming.)
+
+## Does it actually catch anything?
+
+These are our own production runs, not a benchmark — we built this because we kept getting
+burned by single-model reviews on our own code. Scores are per-leg (0-100).
+
+**1. The same diff, a 51-point spread.**
+A game-client change scored **Claude 83 · GPT-5.6 32 · Gemini 80** → combined 64.3, verdict FAIL,
+24 findings. Two models thought it was basically fine. One thought it was broken. They were
+looking at identical input. Whichever single model you had picked, you would have gotten a
+confident answer — and a one-in-three chance it was the wrong one.
+
+**2. A model approving its own work.**
+Claude wrote a 299-line product spec, and a Claude-only multi-perspective review passed it
+(one blocking issue, resolved). A cross-vendor pass on the *same approved document* came back
+FAIL with **12 findings — all 12 accepted, zero rebutted.** Same-vendor review is not an
+independent check; it shares the blind spot that produced the work.
+
+**3. Disagreement is the signal.**
+A design document scored **Claude 72 · GPT-5.6 52 · Gemini 96** — 12 findings, 11 accepted in
+full, 1 in part, zero rebutted. The 44-point gap between the highest and lowest reviewer is
+the part a single-model review structurally cannot show you.
+
+The pattern in all three: **the panel's disagreement located the problem.** A lone reviewer
+returns a number with no error bar. This returns the spread, then makes each finding survive
+a refutation pass before you see it.
 
 ## Install
 
@@ -36,7 +74,7 @@ A single reviewer — human or AI — misses what it isn't looking for. Differen
 
 ```
 /review-double  --stage code     # Claude + Gemini   (2-model, default)
-/review-triple  --stage code     # Claude + Gemini + Codex/GPT  (3-model)
+/review-triple  --stage code     # Claude + Gemini + Codex / GPT-5.6  (3-model)
 ```
 
 Stages: `code` · `test` · `final` · `analysis`. Point it at a diff, a file, or a PR.
@@ -51,9 +89,11 @@ Multi-LLM Review degrades gracefully — it works with whatever you have:
 |---|---|
 | Claude only | single-reviewer (always available in Claude Code) |
 | Claude + Gemini | **2-model review (default)** |
-| Claude + Gemini + Codex/GPT | full 3-model panel |
+| Claude + Gemini + Codex / GPT-5.6 | full 3-model panel |
 
-- **Gemini** — set `GEMINI_API_KEY`. Without it, Gemini reviewer is skipped.
+**Defaults as of v0.2.0** — Claude leg: **Fable 5.1** · Gemini leg: **gemini-3.8-flash** · Codex leg: **gpt-5.6-sol**. Every leg is overridable (see below); the weights are per *vendor*, not per model, so swapping a model does not change the scoring math.
+
+- **Gemini** — set `GEMINI_API_KEY`. Override the model with `GEMINI_REVIEW_MODEL` or the `geminiModel` run arg. Without a key, the Gemini reviewer is skipped.
 - **Codex / GPT** — requires the [Codex MCP](https://github.com/openai/codex) configured in Claude Code. Without it, the tool auto-falls back to the 2-model mode (`crMode: degrade` is the default).
 - **Output location** — review reports and audit logs are written under `CR_OUTPUT_DIR` (default: `./.multi-llm-review/`).
 

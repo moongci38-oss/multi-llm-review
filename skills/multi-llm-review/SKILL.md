@@ -1,6 +1,6 @@
 ---
 name: multi-llm-review
-description: "Multi-LLM parallel adversarial review — Claude(Sonnet) + Gemini double (default) or + Codex/GPT triple (opt-in). Weighted score merge, dedup+confidence scoring, plateau detection, completeness critic, per-finding refute."
+description: "Multi-LLM parallel adversarial review — Claude (Fable 5.1) + Gemini double (default) or + Codex / GPT-5.6 triple (opt-in). Weighted score merge, dedup+confidence scoring, plateau detection, completeness critic, per-finding refute."
 input: target-file path + mode (double|triple) + stage (plan|code|test|final)
 output: "${CR_OUTPUT_DIR:-.multi-llm-review}/reviews/{stage}/{slug}-multi-llm-review.json"
 eval_cases: off
@@ -8,15 +8,15 @@ eval_cases: off
 
 # /multi-llm-review
 
-Claude(Sonnet) + Gemini (double, default) or + Codex/GPT (triple, opt-in) parallel adversarial review with weighted Triage verdict.
+Claude (Fable 5.1) + Gemini (double, default) or + Codex / GPT-5.6 (triple, opt-in) parallel adversarial review with weighted Triage verdict.
 
 ## Quick Start
 
 ```bash
-# Double — Sonnet + Gemini (default, no extra keys needed beyond GEMINI_API_KEY)
+# Double — Claude + Gemini (default, no extra keys needed beyond GEMINI_API_KEY)
 /review-double path/to/my-code.ts
 
-# Triple — Sonnet + Codex + Gemini (requires Codex MCP + ChatGPT subscription)
+# Triple — Claude + Codex + Gemini (requires Codex MCP + ChatGPT subscription)
 /review-triple path/to/important-spec.md --cr on
 ```
 
@@ -24,16 +24,16 @@ Claude(Sonnet) + Gemini (double, default) or + Codex/GPT (triple, opt-in) parall
 
 | Mode | Workers | Score |
 |------|---------|-------|
-| Double (default) | Sonnet + Gemini | `sonnet×0.35 + gemini×0.3 / 0.65` |
-| Triple (opt-in) | Sonnet + Codex + Gemini | `sonnet×0.35 + codex×0.35 + gemini×0.3` |
+| Double (default) | Claude + Gemini | `claude×0.35 + gemini×0.3 / 0.65` |
+| Triple (opt-in) | Claude + Codex + Gemini | `claude×0.35 + codex×0.35 + gemini×0.3` |
 
 ## BYO-key Requirements
 
 | Capability | Requirement |
 |------------|-------------|
-| Claude (Sonnet/Haiku) | Claude Code built-in |
+| Claude (Fable 5.1) | Claude Code built-in |
 | Gemini review | `GEMINI_API_KEY` env (read by gemini-text MCP server) |
-| Codex/GPT triple | `mcp__codex__codex` tool + ChatGPT subscription; pass `crMode:'on'` |
+| Codex / GPT-5.6 triple | `mcp__codex__codex` tool + ChatGPT subscription; pass `crMode:'on'` |
 | GitNexus structural context | GitNexus MCP (optional; grace-degrades if unavailable) |
 
 ## Output
@@ -62,8 +62,8 @@ Fallback (CLAUDE_CODE_DISABLE_WORKFLOWS=1): use Agent pattern directly.
 ### crMode — Worker Control
 
 ```
-crMode: 'degrade'  (default) → Sonnet + Gemini only
-crMode: 'on'                 → Sonnet + Codex + Gemini (requires Codex MCP)
+crMode: 'degrade'  (default) → Claude + Gemini only
+crMode: 'on'                 → Claude + Codex + Gemini (requires Codex MCP)
 crMode: 'off'                → Gemini only
 ```
 
@@ -99,12 +99,85 @@ If `mcp__gitnexus__*` tools are available, Phase 0 enriches review with changed 
 
 ## Scoring & Verdict
 
+### Which legs get scored
+
+A leg that **crashed**, returned an **empty result**, or **declared itself unable to review**
+did not review anything. Its `0` means "no opinion", not "this code is terrible" — so it is
+excluded from the score. Excluded legs are logged with the reason.
+
+| Leg state | Scored? | Findings still gate? |
+|---|:--:|:--:|
+| normal review | ✅ | ✅ |
+| threw / `_error` | ❌ | ✅ |
+| empty (no summary, no findings, ~0 score) | ❌ | ✅ |
+| summary starts with `INCONCLUSIVE(<reason>)` | ❌ | ✅ |
+
+A leg can be dropped from scoring and still have reported a real CRITICAL — losing that
+finding would be worse than the score distortion. So **the gate spans every leg**, scored or not.
+
+### Weights
+
+Weights are keyed by **vendor**, never by array position, and are **renormalized over the legs
+that survived**. A missing leg redistributes its weight instead of counting as a zero.
+
+| Mode | Weights |
+|------|---------|
+| Double | `primary 0.6 · gemini 0.4` |
+| Triple | `primary 0.35 · codex 0.35 · gemini 0.30` |
+
+Full panels reproduce the historical numbers exactly; see `test/verdict.test.mjs`.
+
+### Verdict
+
 | Verdict | Condition |
 |---------|-----------|
-| PASS | combined ≥ 80 AND no HIGH issues |
-| WARN | combined ≥ 60 (HIGH issues present) |
-| FAIL | any CRITICAL issue OR quorum < 2 workers OR combined < 60 |
+| PASS | combined ≥ 80 AND no HIGH issues AND ≥ 2 legs scored AND no INCONCLUSIVE leg |
+| WARN | combined ≥ 60, or a PASS capped by the two rules below |
+| FAIL | any CRITICAL issue, OR **zero** legs scored (quorum failure), OR combined < 60 |
 | SKIP | fallow: no 24h change + prior review on record |
+
+Two caps turn a PASS into a WARN:
+- **single-leg cap** — only one leg produced a review. That is a supported mode
+  (see README "Claude only"), but a single model reviewing alone is not a panel PASS.
+- **inconclusive cap** — a leg said it could not run. An unrun check is not a passed check.
+
+### `evidenceTier` — how much the verdict is worth
+
+`PASS`/`WARN`/`FAIL` alone cannot tell a downstream gate whether a PASS came from a full panel
+or from one surviving leg. `evidenceTier` does:
+
+| Tier | Meaning |
+|---|---|
+| `full` | every expected leg scored, none inconclusive |
+| `degraded` | some leg missing, capped, or inconclusive — verdict is advisory |
+| `unverified` | no leg scored; there is no review here at all |
+
+### `groupthink` — independence check
+
+Independent reviewers are the whole premise. If every leg agrees on everything
+(unanimity ≥ 0.8) or the legs restate each other (echo ≥ 0.2), that is either a genuinely
+clean diff or legs that are not independent — and the tool cannot tell which. It reports
+`groupthink { unanimity, echo, flag }` instead of letting the agreement inflate confidence.
+
+### `substitutions` — did three models actually run?
+
+A three-model panel is only worth more than one model if three different models ran. When an
+external leg is blocked (missing key, denied tool, MCP down), the safe-looking failure is for
+Claude to answer in its place — the panel still returns three results and still says "triple".
+
+Each leg self-reports `provenance: { executed_by, tool_called }`. A leg whose declared executor
+does not match its expected vendor is reported in `substitutions`, and caps PASS at WARN.
+`distinctExecutors` counts how many executor families actually appear; two or more legs that
+all collapse to one family also cap PASS at WARN.
+
+> **What this does not do.** Provenance is **self-reported**. It catches misconfiguration and
+> silent fallback — the realistic failure — but it does **not** catch a model that misreports.
+> A clean `substitutions: []` means *no evidence of substitution*, never *proof of independence*.
+> Structural attestation would have to come from the runtime; a workflow script cannot get it
+> from inside. We would rather ship the honest limit than a guarantee we cannot keep.
+
+**Undeclared is not guilty.** A leg that omits `provenance` is not counted as substituted and
+is counted as its own executor — otherwise every older leg would be flagged as non-independent.
 
 ## Plateau Detection
 
