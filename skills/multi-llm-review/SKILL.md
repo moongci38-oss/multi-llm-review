@@ -159,6 +159,26 @@ Independent reviewers are the whole premise. If every leg agrees on everything
 clean diff or legs that are not independent — and the tool cannot tell which. It reports
 `groupthink { unanimity, echo, flag }` instead of letting the agreement inflate confidence.
 
+### `substitutions` — did three models actually run?
+
+A three-model panel is only worth more than one model if three different models ran. When an
+external leg is blocked (missing key, denied tool, MCP down), the safe-looking failure is for
+Claude to answer in its place — the panel still returns three results and still says "triple".
+
+Each leg self-reports `provenance: { executed_by, tool_called }`. A leg whose declared executor
+does not match its expected vendor is reported in `substitutions`, and caps PASS at WARN.
+`distinctExecutors` counts how many executor families actually appear; two or more legs that
+all collapse to one family also cap PASS at WARN.
+
+> **What this does not do.** Provenance is **self-reported**. It catches misconfiguration and
+> silent fallback — the realistic failure — but it does **not** catch a model that misreports.
+> A clean `substitutions: []` means *no evidence of substitution*, never *proof of independence*.
+> Structural attestation would have to come from the runtime; a workflow script cannot get it
+> from inside. We would rather ship the honest limit than a guarantee we cannot keep.
+
+**Undeclared is not guilty.** A leg that omits `provenance` is not counted as substituted and
+is counted as its own executor — otherwise every older leg would be flagged as non-independent.
+
 ## Plateau Detection
 
 Two consecutive rounds with score delta < 5 = plateau signal.

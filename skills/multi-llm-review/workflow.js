@@ -46,6 +46,16 @@ const REVIEW_SCHEMA = {
       },
     },
     summary: { type: 'string' },
+    // Self-reported provenance. See the honesty note on detectSubstitution() below:
+    // this catches misconfiguration and silent fallback, NOT a model that lies.
+    provenance: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        executed_by: { type: 'string' },   // model/vendor that actually produced this review
+        tool_called: { type: 'string' },   // the tool actually invoked, or "none"
+      },
+    },
   },
   required: ['score','issues','summary'],
 }
@@ -272,12 +282,52 @@ const _groupthinkStats = (legs, deduped) => {
   return { legs: n, unanimity, echo, flag }
 }
 
+// ── Worker substitution ──────────────────────────────────────────────────────
+// A "3-model panel" is only worth more than one model if three different models
+// actually ran. When an external leg is blocked (missing key, denied tool, MCP down),
+// the safe-looking failure is for Claude to answer in its place — the panel still
+// returns three results and the report still says "triple".
+//
+// ⚠️ HONESTY NOTE, because this product is about not overclaiming:
+// provenance is SELF-REPORTED by each leg. That catches misconfiguration and silent
+// fallback — the realistic failure — but it does NOT catch a model that misreports.
+// Treat a clean provenance check as "no evidence of substitution", never as proof of
+// independence. Structural verification would need the runtime to attest the executor,
+// which a workflow script cannot do from inside.
+const EXPECTED_EXEC = {
+  primary: /claude|fable|opus|sonnet|haiku/i,
+  codex:   /gpt|codex|\bo[0-9]/i,
+  gemini:  /gemini/i,
+}
+const _execFamily = (s) => {
+  const t = String(s || '')
+  for (const [fam, re] of Object.entries(EXPECTED_EXEC)) if (re.test(t)) return fam
+  return t.trim() ? 'other' : 'undeclared'
+}
+const detectSubstitution = (legs) => legs.flatMap((r) => {
+  const declared = r?.provenance?.executed_by
+  if (!declared) return []                       // undeclared != substituted
+  const expect = EXPECTED_EXEC[r.worker]
+  if (!expect) return []
+  return expect.test(String(declared)) ? [] : [{ worker: r.worker, declared: String(declared) }]
+})
+// Distinct executor families across the legs that were actually scored. Three legs all
+// executed by the same family is one reviewer wearing three hats.
+const _distinctExecutors = (legs) => new Set(
+  legs.map((r) => (r?.provenance?.executed_by ? _execFamily(r.provenance.executed_by) : `leg:${r.worker}`))
+).size
+
 // ── Phase 1: Review (multi-LLM parallel) ─────────────────────────────────────
 phase('Review')
 const basePrompt = `Review target: ${targetPath || 'staged changes'}. stage=${stage}. [${depthHint}] ` +
   `Return score 0-100, issues(category/severity/description array), summary.` +
   ` Required checks: (1) scope-drift — changes outside task scope = high issue. (2) Fix-First — list critical/high first.` +
-  contentSection + structuralNote
+  contentSection + structuralNote +
+  // Provenance self-report. Legs that cannot honour it simply omit the field
+  // (undeclared != substituted), so this is additive and never breaks an older leg.
+  ` Also set provenance:{executed_by:"<the model that actually produced this review>",` +
+  ` tool_called:"<the tool you actually invoked, or none>"}. Report what really ran —` +
+  ` if you answered in place of another model because its tool was unavailable, say so there.`
 
 // crLens: opt-in lens diversification (off = identical behavior to pre-lens)
 const lensHintPrimary = crLens ? '[lens=holistic] Focus: architecture, design consistency, goal achievement, maintainability. Security/OWASP details, perf N+1, spec-drift → other workers. ' : ''
@@ -394,6 +444,19 @@ if (groupthink.flag) {
   log(`[GROUPTHINK] unanimity=${groupthink.unanimity} echo=${groupthink.echo} — legs may not be independent; treat the agreement as weaker evidence than it looks`)
 }
 
+// Did the panel actually consist of different models?
+const substitutions = detectSubstitution(usableLegs)
+for (const sub of substitutions) {
+  log(`[SUBSTITUTED] ${sub.worker} leg was executed by "${sub.declared}" — not the expected vendor. This is not a ${sub.worker} opinion.`)
+}
+const distinctExecutors = _distinctExecutors(usableLegs)
+// Two+ legs that all resolve to one executor family is one reviewer wearing several hats.
+const singleExecutorCap = usableLegs.length >= 2 && distinctExecutors < 2
+if (singleExecutorCap) {
+  log(`[SINGLE-EXECUTOR] ${usableLegs.length} legs but only ${distinctExecutors} distinct executor — the panel is not independent`)
+}
+if (substitutions.length > 0) degraded = true
+
 // Quorum: zero scored legs = we have no review at all, not a bad review.
 const quorumFail = usableLegs.length === 0
 // One scored leg is a single-model self-review. That is a supported mode (see README
@@ -413,9 +476,18 @@ if (verdict === 'PASS' && inconclusiveLegs.length > 0) {
   verdict = 'WARN'
   log(`[cap] PASS → WARN: ${inconclusiveLegs.length} leg(s) reported INCONCLUSIVE — an unrun check is not a passed check`)
 }
+if (verdict === 'PASS' && substitutions.length > 0) {
+  verdict = 'WARN'
+  log(`[cap] PASS → WARN: ${substitutions.length} leg(s) were executed by a different vendor than declared`)
+}
+if (verdict === 'PASS' && singleExecutorCap) {
+  verdict = 'WARN'
+  log(`[cap] PASS → WARN: every leg resolved to one executor — a multi-model PASS needs more than one model`)
+}
 // evidenceTier tells a downstream gate how much this verdict is worth, which PASS/WARN/FAIL alone cannot.
 const evidenceTier = quorumFail ? 'unverified'
-                   : (degraded || singleLegCap || inconclusiveLegs.length > 0) ? 'degraded'
+                   : (degraded || singleLegCap || inconclusiveLegs.length > 0
+                      || substitutions.length > 0 || singleExecutorCap) ? 'degraded'
                    : 'full'
 log(`Triage: ${mode} scores=${JSON.stringify(scores)} legs=${usableLegs.length}/${expected} combined=${combined.toFixed(1)}${degraded ? ' (degraded)' : ''} evidence=${evidenceTier} → ${verdict}`)
 
@@ -634,7 +706,7 @@ return {
   slug, mode,
   combined: parseFloat(combined.toFixed(1)),
   verdict, scores, hasCrit, hasHigh, degraded, quorumFail,
-  evidenceTier, groupthink,
+  evidenceTier, groupthink, substitutions, distinctExecutors,
   legsScored: usableLegs.length, legsExpected: expected,
   legsExcluded: excludedLegs.map(r => ({ worker: r.worker, reason: _legInconclusive(r) ? _inconclusiveReason(r) : (r._error ? 'error' : 'empty') })),
   structuralRisk: structuralCtx?.risk_level,

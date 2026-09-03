@@ -32,6 +32,10 @@ A single reviewer — human or AI — misses what it isn't looking for. Differen
   mistaken for a PASS from the full panel.
 - **Independence is checked, not assumed** — if the panel agrees on everything, that is
   reported (`groupthink`) rather than counted as extra confidence.
+- **A panel of three that was secretly one** — when an external reviewer is blocked, the
+  quiet failure is for Claude to answer in its place and the report still to say "3 models".
+  Legs declare who actually ran; a mismatch caps the verdict. (Self-reported — it catches
+  misconfiguration, not a model that lies. We say so rather than overclaiming.)
 
 ## Does it actually catch anything?
 

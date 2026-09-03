@@ -38,6 +38,8 @@ const api = mk(`{
   legValid: _legValid,
   legInconclusive: _legInconclusive,
   groupthink: _groupthinkStats,
+  detectSubstitution,
+  distinctExecutors: _distinctExecutors,
   weights: LEG_WEIGHTS,
   combine: (legs) => {
     const clamp = s => Math.max(0, Math.min(100, Number(s) || 0))
@@ -102,6 +104,39 @@ t('divergent panel is not flagged', () => {
   ok(!api('triple').groupthink(legs, deduped).flag, 'divergent panel wrongly flagged')
 })
 t('single leg cannot be judged for groupthink', () => eq(api('triple').groupthink([real('primary', 90)], []).flag, false, 'n<2 flagged'))
+
+console.log('\n[worker substitution — self-reported provenance]')
+const withProv = (w, exec) => ({ ...real(w, 80), provenance: { executed_by: exec, tool_called: 'x' } })
+
+t('gemini leg answered by Claude is caught', () => {
+  const subs = api('triple').detectSubstitution([withProv('gemini', 'claude-fable-5-1')])
+  eq(subs.length, 1, 'substitution missed')
+  eq(subs[0].worker, 'gemini', 'wrong worker reported')
+})
+t('codex leg answered by Claude is caught', () =>
+  eq(api('triple').detectSubstitution([withProv('codex', 'claude-opus-5')]).length, 1, 'codex substitution missed'))
+t('legs reporting their own vendor are clean', () => {
+  const legs = [withProv('primary', 'claude-fable-5-1'), withProv('codex', 'gpt-5.6-sol'), withProv('gemini', 'gemini-3.8-flash')]
+  eq(api('triple').detectSubstitution(legs).length, 0, 'false positive on a legitimate panel')
+})
+t('undeclared provenance is NOT treated as substitution', () =>
+  eq(api('triple').detectSubstitution([real('gemini', 80)]).length, 0, 'undeclared wrongly flagged — silence is not guilt'))
+
+console.log('\n[executor independence]')
+t('three vendors = three distinct executors', () => {
+  const legs = [withProv('primary', 'claude-fable-5-1'), withProv('codex', 'gpt-5.6-sol'), withProv('gemini', 'gemini-3.8-flash')]
+  eq(api('triple').distinctExecutors(legs), 3, 'distinct executors miscounted')
+})
+t('three legs all run by Claude collapse to one executor', () => {
+  const legs = [withProv('primary', 'claude-fable-5-1'), withProv('codex', 'claude-opus-5'), withProv('gemini', 'claude-sonnet-5')]
+  eq(api('triple').distinctExecutors(legs), 1, 'single-executor panel not detected')
+})
+t('undeclared legs are counted per-leg, not collapsed', () => {
+  // without provenance we cannot claim they are the same model — assuming so would
+  // flag every legacy run as non-independent
+  const legs = [real('primary', 80), real('codex', 80), real('gemini', 80)]
+  eq(api('triple').distinctExecutors(legs), 3, 'undeclared legs wrongly collapsed')
+})
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
