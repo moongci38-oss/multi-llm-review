@@ -1,5 +1,5 @@
 ---
-description: Sonnet + Codex + Gemini 3-worker adversarial review (multi-llm-review --mode triple shortcut). Use for plateau escalation or high-stakes spec review.
+description: Claude + Codex + Gemini 3-worker adversarial review (multi-llm-review --mode triple shortcut). Use for plateau escalation or high-stakes spec review.
 group: review
 ---
 
@@ -14,11 +14,11 @@ group: review
 → `/multi-llm-review <target-file> --mode triple [--stage <stage>] [--cr <crMode>]`
 
 **`--cr` / `--no-codex`**: worker control.
-- `--cr on` (recommended for triple): Sonnet + Codex + Gemini 3-worker
-- `--cr degrade` or `--no-codex`: Sonnet + Gemini 2-worker (Codex excluded — rate-limit protection / Codex MCP unavailable)
+- `--cr on` (recommended for triple): Claude + Codex + Gemini 3-worker
+- `--cr degrade` or `--no-codex`: Claude + Gemini 2-worker (Codex excluded — rate-limit protection / Codex MCP unavailable)
 - `--cr off`: same as `degrade`
 
-Note: Without `--cr on`, triple mode falls back to 2-worker (Sonnet+Gemini). For true 3-LLM triple, pass `--cr on` and ensure `mcp__codex__codex` is available.
+Note: Without `--cr on`, triple mode falls back to 2-worker (Claude+Gemini). For true 3-LLM triple, pass `--cr on` and ensure `mcp__codex__codex` is available.
 
 ## Trigger Conditions
 
@@ -38,7 +38,7 @@ Workflow({
 ```
 
 `crMode:'on'` → full 3-LLM behavior.
-`crMode:'degrade'`/`'off'` → Codex worker and ApproveWorker skipped; Sonnet+Gemini only.
+`crMode:'degrade'`/`'off'` → Codex worker and ApproveWorker skipped; Claude+Gemini only.
 
 Fallback (`CLAUDE_CODE_DISABLE_WORKFLOWS=1`): run multi-llm-review directly via Agent.
 

@@ -1,6 +1,6 @@
 ---
 name: multi-llm-review
-description: "Multi-LLM parallel adversarial review — Claude(Sonnet) + Gemini double (default) or + Codex/GPT triple (opt-in). Weighted score merge, dedup+confidence scoring, plateau detection, completeness critic, per-finding refute."
+description: "Multi-LLM parallel adversarial review — Claude (Fable 5.1) + Gemini double (default) or + Codex / GPT-5.6 triple (opt-in). Weighted score merge, dedup+confidence scoring, plateau detection, completeness critic, per-finding refute."
 input: target-file path + mode (double|triple) + stage (plan|code|test|final)
 output: "${CR_OUTPUT_DIR:-.multi-llm-review}/reviews/{stage}/{slug}-multi-llm-review.json"
 eval_cases: off
@@ -8,15 +8,15 @@ eval_cases: off
 
 # /multi-llm-review
 
-Claude(Sonnet) + Gemini (double, default) or + Codex/GPT (triple, opt-in) parallel adversarial review with weighted Triage verdict.
+Claude (Fable 5.1) + Gemini (double, default) or + Codex / GPT-5.6 (triple, opt-in) parallel adversarial review with weighted Triage verdict.
 
 ## Quick Start
 
 ```bash
-# Double — Sonnet + Gemini (default, no extra keys needed beyond GEMINI_API_KEY)
+# Double — Claude + Gemini (default, no extra keys needed beyond GEMINI_API_KEY)
 /review-double path/to/my-code.ts
 
-# Triple — Sonnet + Codex + Gemini (requires Codex MCP + ChatGPT subscription)
+# Triple — Claude + Codex + Gemini (requires Codex MCP + ChatGPT subscription)
 /review-triple path/to/important-spec.md --cr on
 ```
 
@@ -24,16 +24,16 @@ Claude(Sonnet) + Gemini (double, default) or + Codex/GPT (triple, opt-in) parall
 
 | Mode | Workers | Score |
 |------|---------|-------|
-| Double (default) | Sonnet + Gemini | `sonnet×0.35 + gemini×0.3 / 0.65` |
-| Triple (opt-in) | Sonnet + Codex + Gemini | `sonnet×0.35 + codex×0.35 + gemini×0.3` |
+| Double (default) | Claude + Gemini | `claude×0.35 + gemini×0.3 / 0.65` |
+| Triple (opt-in) | Claude + Codex + Gemini | `claude×0.35 + codex×0.35 + gemini×0.3` |
 
 ## BYO-key Requirements
 
 | Capability | Requirement |
 |------------|-------------|
-| Claude (Sonnet/Haiku) | Claude Code built-in |
+| Claude (Fable 5.1) | Claude Code built-in |
 | Gemini review | `GEMINI_API_KEY` env (read by gemini-text MCP server) |
-| Codex/GPT triple | `mcp__codex__codex` tool + ChatGPT subscription; pass `crMode:'on'` |
+| Codex / GPT-5.6 triple | `mcp__codex__codex` tool + ChatGPT subscription; pass `crMode:'on'` |
 | GitNexus structural context | GitNexus MCP (optional; grace-degrades if unavailable) |
 
 ## Output
@@ -62,8 +62,8 @@ Fallback (CLAUDE_CODE_DISABLE_WORKFLOWS=1): use Agent pattern directly.
 ### crMode — Worker Control
 
 ```
-crMode: 'degrade'  (default) → Sonnet + Gemini only
-crMode: 'on'                 → Sonnet + Codex + Gemini (requires Codex MCP)
+crMode: 'degrade'  (default) → Claude + Gemini only
+crMode: 'on'                 → Claude + Codex + Gemini (requires Codex MCP)
 crMode: 'off'                → Gemini only
 ```
 

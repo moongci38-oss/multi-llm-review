@@ -39,7 +39,7 @@ findings: 11 raw → deduped, confidence-scored, Fix-First ordered
 
 ### What each model caught — different lenses, different blind spots
 
-**Primary (Claude / Sonnet) — security · correctness · architecture**
+**Primary (Claude / Fable 5.1) — security · correctness · architecture**
 
 | Severity | Finding |
 |---|---|

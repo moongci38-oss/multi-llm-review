@@ -9,7 +9,7 @@
       "expectations": [
         "primary worker returns {score, issues, summary}",
         "gemini worker returns {score, issues, summary}",
-        "combined score computed (sonnet×0.35 + gemini×0.3 / 0.65)",
+        "combined score computed (claude×0.35 + gemini×0.3 / 0.65)",
         "CRITICAL issue present → combined verdict = FAIL",
         "evidence JSON written to .multi-llm-review/reviews/{stage}/{slug}-multi-llm-review.json"
       ]

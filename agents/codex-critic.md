@@ -22,7 +22,7 @@ mcp__codex__codex(
     cwd="<working_dir>",
     sandbox="read-only",
     approval_policy="never",
-    model="gpt-5-mini",  # cost-optimized default; use gpt-5 for final-stage reviews
+    model="gpt-5.6-sol",  # frontier reasoning model for adversarial review
     config={"model_reasoning_effort": "medium"}
 )
 ```
@@ -35,5 +35,5 @@ mcp__codex__codex(
 
 ## Notes
 
-- This worker is **optional**. Without it, multi-llm-review degrades to Sonnet+Gemini 2-worker (still functional).
+- This worker is **optional**. Without it, multi-llm-review degrades to Claude+Gemini 2-worker (still functional).
 - Enable via `crMode: 'on'` arg; default public behavior is `crMode: 'degrade'` (Codex skipped).

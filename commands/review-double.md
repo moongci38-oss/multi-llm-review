@@ -1,5 +1,5 @@
 ---
-description: Sonnet + Gemini 2-worker adversarial review (multi-llm-review --mode double shortcut)
+description: Claude + Gemini 2-worker adversarial review (multi-llm-review --mode double shortcut)
 group: review
 ---
 
@@ -14,7 +14,7 @@ group: review
 → `/multi-llm-review <target-file> --mode double [--stage <stage>] [--cr <crMode>]`
 
 **`--cr` / `--no-codex`**: worker control.
-- `--cr degrade` (default): Sonnet + Gemini 2-worker (no Codex required)
+- `--cr degrade` (default): Claude + Gemini 2-worker (no Codex required)
 - `--cr on`: Codex + Gemini 2-worker (requires `mcp__codex__codex` + ChatGPT subscription)
 - `--no-codex`: same as `--cr degrade`
 - `--cr off`: Gemini 1-worker only
