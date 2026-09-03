@@ -23,6 +23,14 @@ export const meta = {
   ],
 }
 
+// Single source of truth for issue categories. The prompt is built FROM this list, so the
+// two cannot drift: an enum change reaches the legs automatically. Before this was shared,
+// the prompt said only "category/severity/description" and legs invented their own values —
+// observed 2026-09-03 on live calls: Gemini returned "consistency", Codex returned "logic".
+// Neither is in the enum, so structured output would reject or coerce them.
+const ISSUE_CATEGORIES = ['correctness','security','performance','maintainability','type-safety','test-coverage','scope-drift','naming','documentation']
+const SEVERITIES = ['critical','high','medium','low']
+
 const REVIEW_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -34,8 +42,8 @@ const REVIEW_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          category: { type: 'string', enum: ['correctness','security','performance','maintainability','type-safety','test-coverage','scope-drift','naming','documentation'] },
-          severity: { type: 'string', enum: ['critical','high','medium','low'] },
+          category: { type: 'string', enum: ISSUE_CATEGORIES },
+          severity: { type: 'string', enum: SEVERITIES },
           description: { type: 'string' },
           file: { type: 'string' },
           line: { type: 'number' },
@@ -339,6 +347,8 @@ const _distinctExecutors = (legs) => new Set(
 phase('Review')
 const basePrompt = `Review target: ${targetPath || 'staged changes'}. stage=${stage}. [${depthHint}] ` +
   `Return score 0-100, issues(category/severity/description array), summary.` +
+  ` category MUST be one of: ${ISSUE_CATEGORIES.join('|')}. severity MUST be one of: ${SEVERITIES.join('|')}.` +
+  ` Pick the closest listed category — do not invent a new one (a value outside the list is dropped by the schema).` +
   ` Required checks: (1) scope-drift — changes outside task scope = high issue. (2) Fix-First — list critical/high first.` +
   contentSection + structuralNote +
   // Provenance self-report. Legs that cannot honour it simply omit the field
