@@ -177,6 +177,23 @@ t('the prompt actually names the allowed categories', () => {
   ok(src.includes('category MUST be one of: ${ISSUE_CATEGORIES.join'),
      'prompt does not tell legs the allowed categories')
 })
+
+// The check above is a file-wide substring match, so it passes as long as ANY prompt names the
+// categories — basePrompt did, and that hid the real gap. The Gemini leg does not send basePrompt
+// to the model: the driver relays a separate literal prompt to mcp__gemini-text__generate_text,
+// and that literal never listed the categories. Observed live 2026-09-03 (after the previous
+// "fix"): gemini-3.8-flash returned category "consistency" on 2 of 4 findings, while Codex —
+// which does receive basePrompt — returned 8 of 8 inside the enum on the same diff.
+// So this asserts on the relayed prompt specifically, not on the file as a whole.
+const geminiRelayPrompt = extract('- prompt: "<review-target>', '\n- system_instruction:')
+t('the prompt relayed to the Gemini model names the allowed categories too', () => {
+  ok(geminiRelayPrompt.includes("ISSUE_CATEGORIES.join"),
+     'the Gemini leg relays a prompt that never lists the categories — the model invents its own')
+})
+t('the relayed prompt takes severity from the shared constant as well', () => {
+  ok(geminiRelayPrompt.includes("SEVERITIES.join"),
+     'severity is inlined as a literal in the relayed prompt — it can drift from SEVERITIES')
+})
 t('the categories the live legs invented are still absent (they must be coerced, not silently added)', () => {
   for (const invented of ['consistency', 'logic']) {
     ok(!CATS.includes(invented), `"${invented}" was quietly added to the enum instead of the prompt being fixed`)
