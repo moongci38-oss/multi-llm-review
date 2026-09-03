@@ -122,6 +122,30 @@ t('legs reporting their own vendor are clean', () => {
 t('undeclared provenance is NOT treated as substitution', () =>
   eq(api('triple').detectSubstitution([real('gemini', 80)]).length, 0, 'undeclared wrongly flagged — silence is not guilt'))
 
+console.log('\n[tool evidence outranks self-reported model name]')
+const withProvTool = (w, exec, tool) => ({ ...real(w, 80), provenance: { executed_by: exec, tool_called: tool } })
+
+// Observed 2026-09-03 on a live call: gemini-3.8-flash reported executed_by "Claude".
+// Before this fix, that misreport flagged every healthy Gemini run as substituted.
+t('REGRESSION: gemini MCP was called, inner model misnames itself as Claude → clean', () => {
+  const legs = [withProvTool('gemini', 'Claude', 'mcp__gemini-text__generate_text')]
+  eq(api('triple').detectSubstitution(legs).length, 0, 'healthy gemini run flagged as substituted')
+})
+t('no gemini tool called + declares Claude → still substituted', () => {
+  const legs = [withProvTool('gemini', 'claude-fable-5-1', 'none')]
+  eq(api('triple').detectSubstitution(legs).length, 1, 'real substitution missed')
+})
+t('codex tool evidence clears a misnamed codex leg', () =>
+  eq(api('triple').detectSubstitution([withProvTool('codex', 'assistant', 'mcp__codex__codex')]).length, 0, 'codex tool evidence ignored'))
+t('tool evidence also fixes the executor count', () => {
+  const legs = [
+    withProvTool('primary', 'claude-fable-5-1', 'none'),
+    withProvTool('codex', 'assistant', 'mcp__codex__codex'),
+    withProvTool('gemini', 'Claude', 'mcp__gemini-text__generate_text'),
+  ]
+  eq(api('triple').distinctExecutors(legs), 3, 'tool-verified legs collapsed by their misreported names')
+})
+
 console.log('\n[executor independence]')
 t('three vendors = three distinct executors', () => {
   const legs = [withProv('primary', 'claude-fable-5-1'), withProv('codex', 'gpt-5.6-sol'), withProv('gemini', 'gemini-3.8-flash')]

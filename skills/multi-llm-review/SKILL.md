@@ -170,6 +170,15 @@ does not match its expected vendor is reported in `substitutions`, and caps PASS
 `distinctExecutors` counts how many executor families actually appear; two or more legs that
 all collapse to one family also cap PASS at WARN.
 
+**Tool evidence outranks the model's name for itself.** A tool name is recorded by the caller;
+a model name is recalled by the model — and models get it wrong. On 2026-09-03 a live
+`gemini-3.8-flash` call returned `executed_by: "Claude"`. Taking that at face value would have
+flagged **every healthy Gemini run** as substituted. So if a leg's `tool_called` matches the tool
+that can only reach that vendor, the leg is clean regardless of what it called itself.
+
+For relay legs (Gemini), `provenance` is written by the **driver** from the call it actually made,
+never copied out of the reviewed model's JSON reply.
+
 > **What this does not do.** Provenance is **self-reported**. It catches misconfiguration and
 > silent fallback — the realistic failure — but it does **not** catch a model that misreports.
 > A clean `substitutions: []` means *no evidence of substitution*, never *proof of independence*.
