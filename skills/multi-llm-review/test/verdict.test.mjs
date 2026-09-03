@@ -162,5 +162,28 @@ t('undeclared legs are counted per-leg, not collapsed', () => {
   eq(api('triple').distinctExecutors(legs), 3, 'undeclared legs wrongly collapsed')
 })
 
+console.log('\n[schema/prompt cannot drift apart]')
+// Observed 2026-09-03 on live calls: Gemini returned category "consistency", Codex returned
+// "logic". Neither is in the enum. Root cause was that the prompt never told the legs the
+// allowed values — so the fix is that both now come from one constant.
+const catsLine = extract('const ISSUE_CATEGORIES', 'const REVIEW_SCHEMA')
+const CATS = JSON.parse(catsLine.match(/\[[^\]]*\]/)[0].replace(/'/g, '"'))
+
+t('schema reads its enum from the shared constant, not a literal', () => {
+  ok(/category:\s*\{\s*type:\s*'string',\s*enum:\s*ISSUE_CATEGORIES\s*\}/.test(src),
+     'schema still hardcodes its own category list — it can drift from the prompt again')
+})
+t('the prompt actually names the allowed categories', () => {
+  ok(src.includes('category MUST be one of: ${ISSUE_CATEGORIES.join'),
+     'prompt does not tell legs the allowed categories')
+})
+t('the categories the live legs invented are still absent (they must be coerced, not silently added)', () => {
+  for (const invented of ['consistency', 'logic']) {
+    ok(!CATS.includes(invented), `"${invented}" was quietly added to the enum instead of the prompt being fixed`)
+  }
+})
+t('severity list is shared too', () =>
+  ok(/severity:\s*\{\s*type:\s*'string',\s*enum:\s*SEVERITIES\s*\}/.test(src), 'severity still hardcoded'))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)
