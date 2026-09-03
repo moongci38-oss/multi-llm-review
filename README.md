@@ -24,6 +24,14 @@ A single reviewer — human or AI — misses what it isn't looking for. Differen
 - **Plateau detection** — stops looping when rounds stop finding anything new.
 - **Completeness critic** — a final pass asking "what did everyone miss?"
 - **Per-finding refutation** — each finding must survive a skeptic before it ships.
+- **A dead reviewer is not a bad review** — a leg that crashed, came back empty, or said it
+  could not run is dropped from the score instead of averaging in as a zero. Its findings
+  still count against the gate.
+- **A verdict you can weigh** — every result carries an `evidenceTier`
+  (`full` / `degraded` / `unverified`), so a PASS from one surviving reviewer is never
+  mistaken for a PASS from the full panel.
+- **Independence is checked, not assumed** — if the panel agrees on everything, that is
+  reported (`groupthink`) rather than counted as extra confidence.
 
 ## Does it actually catch anything?
 

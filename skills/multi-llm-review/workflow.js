@@ -231,6 +231,47 @@ const noThrow = (thunk, name) => async () => {
   catch (e) { return { score: 0, issues: [], summary: `[${name} error] ${e?.message || String(e)}`, _error: true } }
 }
 
+// ── Leg validity ─────────────────────────────────────────────────────────────
+// A leg that crashed, or that came back empty, did NOT review the target. Its 0 is
+// "no opinion", not "this code is terrible" — averaging it in silently drags the
+// verdict down while `degraded` stays false, because the leg is still *present*.
+// So: exclude such legs from SCORING, but keep their findings for the gate (below).
+const INVALID_LEG_SCORE_MAX = 10
+const MIN_REAL_SUMMARY = 40
+const _legValid = (r) => {
+  if (!r) return false
+  if (r._error === true) return false
+  if (_legInconclusive(r)) return false
+  const summary = String(r.summary || '')
+  const nIssues = (r.issues || []).length
+  // no summary + no findings + ~zero score = the leg produced nothing to judge on
+  return !(summary.length < MIN_REAL_SUMMARY && nIssues === 0 && (Number(r.score) || 0) <= INVALID_LEG_SCORE_MAX)
+}
+
+// A leg may also *say* it could not review (sandbox denied, tool missing, content
+// unreadable). "I could not review this" must never be scored as "score 0 = bad code".
+// Contract: the leg puts INCONCLUSIVE(<reason>) at the START of its summary.
+const _INCONCLUSIVE_RE = /^\s*INCONCLUSIVE\s*\(([^)]{0,200})\)/i
+const _legInconclusive = (r) => _INCONCLUSIVE_RE.test(String(r?.summary || ''))
+const _inconclusiveReason = (r) => (String(r?.summary || '').match(_INCONCLUSIVE_RE)?.[1] || 'unspecified').trim()
+
+// ── Groupthink / independence check ──────────────────────────────────────────
+// Independent reviewers are the whole point. If every leg agrees on everything, that
+// is either a genuinely clean diff or the legs are not independent (shared prompt bias,
+// one model echoing another). We cannot tell which — so we report it instead of hiding it.
+const _groupthinkStats = (legs, deduped) => {
+  const n = legs.length
+  if (n < 2) return { legs: n, unanimity: null, echo: null, flag: false }
+  const total = deduped.length
+  const allAgree = deduped.filter(i => (i._count || 1) === n).length
+  const unanimity = total ? parseFloat((allAgree / total).toFixed(2)) : null
+  // echo = distinct finding descriptions vs total; low distinctness => legs restating each other
+  const descs = legs.flatMap(r => (r.issues || []).map(i => String(i.description || '').slice(0, 120).toLowerCase().trim()))
+  const echo = descs.length ? parseFloat((1 - (new Set(descs).size / descs.length)).toFixed(2)) : null
+  const flag = (unanimity !== null && unanimity >= 0.8) || (echo !== null && echo >= 0.2)
+  return { legs: n, unanimity, echo, flag }
+}
+
 // ── Phase 1: Review (multi-LLM parallel) ─────────────────────────────────────
 phase('Review')
 const basePrompt = `Review target: ${targetPath || 'staged changes'}. stage=${stage}. [${depthHint}] ` +
@@ -298,7 +339,8 @@ for (const r of results) {
   }
 }
 const dedupedIssues = Array.from(_dedupMap.values())
-  .map(i => ({ ...i, confidence: parseFloat((i._count / results.length).toFixed(2)) }))
+  // divide by legs that actually reviewed — a dead leg cannot 'fail to confirm' a finding
+  .map(i => ({ ...i, confidence: parseFloat((i._count / Math.max(1, results.filter(_legValid).length)).toFixed(2)) }))
   .sort((a, b) => ((_sevOrd[a.severity]??3) - (_sevOrd[b.severity]??3)) || (b.confidence - a.confidence))
 const _rawCount = results.flatMap(r => r.issues || []).length
 log(`[Dedup] raw=${_rawCount} → deduped=${dedupedIssues.length} cross-worker-confirmed=${dedupedIssues.filter(i=>i._count>1).length}`)
@@ -306,43 +348,76 @@ log(`[Dedup] raw=${_rawCount} → deduped=${dedupedIssues.length} cross-worker-c
 // ── Phase 2: Triage ───────────────────────────────────────────────────────────
 phase('Triage')
 const clamp = s => Math.max(0, Math.min(100, Number(s) || 0))
-const scores = results.map(r => clamp(r.score))
 const expected = mode === 'triple' ? (codexEnabled ? 3 : 2) : (codexEnabled ? 2 : 1)
 
-// Score aggregation. Degraded (fewer workers than expected) → equal average + WARN.
-let combined, degraded = false
-if (mode === 'triple' && results.length === 3) {
-  combined = scores[0] * 0.35 + scores[1] * 0.35 + scores[2] * 0.3
-} else if (mode === 'triple' && !codexEnabled && results.length === 2) {
-  // degrade path: Claude×0.35 + Gemini×0.3, renormalized /0.65
-  combined = (scores[0] * 0.35 + scores[1] * 0.3) / 0.65
-} else if (mode === 'double' && results.length === 2) {
-  combined = scores[0] * 0.6 + scores[1] * 0.4
-} else if (results.length >= 2) {
-  degraded = true
-  combined = scores.reduce((a, b) => a + b, 0) / scores.length
-  log(`[WARN] ${mode} degraded: ${results.length}/${expected} workers alive — using equal average`)
-} else if (results.length === 1) {
-  // root-cause: Bug 2 fix — single surviving worker still yields usable verdict (degrade, not hard-fail)
-  degraded = true
-  combined = scores[0] || 0
-  log(`[WARN] single-worker result (${results[0]?.worker || 'unknown'}): 1/${expected} workers alive — degraded confidence, advisory verdict only`)
-} else {
-  degraded = true
-  combined = 0
-  log(`[WARN] quorum failure: 0/${expected} workers — no usable result`)
+// Split legs: only legs that actually produced a review are SCORED. Excluded legs keep
+// their findings for the gate below — a leg can be dropped for an empty summary while
+// still having reported a real critical, and losing that finding would be worse than
+// the score distortion we are fixing.
+const usableLegs = results.filter(_legValid)
+const excludedLegs = results.filter(r => !_legValid(r))
+const inconclusiveLegs = excludedLegs.filter(_legInconclusive)
+for (const r of excludedLegs) {
+  const why = _legInconclusive(r) ? `inconclusive: ${_inconclusiveReason(r)}`
+            : r._error === true ? 'errored'
+            : 'empty result (no summary, no findings, ~zero score)'
+  log(`[leg-excluded] ${r.worker || 'unknown'} — ${why}; its score is NOT averaged in`)
 }
 
+// Weights are keyed by VENDOR, never by array position. The old index-based form
+// (scores[0]*0.35 + scores[1]*0.35 + scores[2]*0.3) silently mis-assigned weights the
+// moment any leg dropped out, because the surviving legs shifted down into the wrong slots.
+const LEG_WEIGHTS = mode === 'double'
+  ? { primary: 0.6, gemini: 0.4 }
+  : { primary: 0.35, codex: 0.35, gemini: 0.30 }
+const scores = usableLegs.map(r => clamp(r.score))
+let combined = 0, degraded = false
+if (usableLegs.length > 0) {
+  // Renormalize over whatever survived, so a missing leg redistributes its weight
+  // instead of counting as a zero.
+  const wSum = usableLegs.reduce((a, r) => a + (LEG_WEIGHTS[r.worker] ?? 0), 0)
+  combined = wSum > 0
+    ? usableLegs.reduce((a, r) => a + clamp(r.score) * (LEG_WEIGHTS[r.worker] ?? 0), 0) / wSum
+    : scores.reduce((a, b) => a + b, 0) / scores.length
+}
+if (usableLegs.length < expected) {
+  degraded = true
+  log(`[WARN] ${mode} degraded: ${usableLegs.length}/${expected} legs produced a review — weights renormalized over survivors`)
+}
+
+// Gate spans ALL legs, including excluded ones (see note above).
 const hasCrit = results.some(r => r.issues?.some(i => i.severity === 'critical'))
 const hasHigh = results.some(r => r.issues?.some(i => i.severity === 'high'))
-// root-cause: Bug 2 fix — quorum threshold adaptive: single usable worker → degrade+WARN not hard-fail
-const quorumFail = results.length === 0
+
+const groupthink = _groupthinkStats(usableLegs, dedupedIssues)
+if (groupthink.flag) {
+  log(`[GROUPTHINK] unanimity=${groupthink.unanimity} echo=${groupthink.echo} — legs may not be independent; treat the agreement as weaker evidence than it looks`)
+}
+
+// Quorum: zero scored legs = we have no review at all, not a bad review.
+const quorumFail = usableLegs.length === 0
+// One scored leg is a single-model self-review. That is a supported mode (see README
+// "Claude only"), but it must never be reported as a multi-LLM PASS — cap it at WARN.
+const singleLegCap = usableLegs.length === 1
 let verdict
-if (hasCrit || quorumFail) verdict = 'FAIL'
+if (quorumFail) verdict = 'FAIL'
+else if (hasCrit) verdict = 'FAIL'
 else if (combined >= 80 && !hasHigh) verdict = 'PASS'
 else if (combined >= 60) verdict = 'WARN'
 else verdict = 'FAIL'
-log(`Triage: ${mode} scores=${JSON.stringify(scores)} combined=${combined.toFixed(1)}${degraded ? ' (degraded)' : ''} → ${verdict}`)
+if (verdict === 'PASS' && singleLegCap) {
+  verdict = 'WARN'
+  log(`[cap] PASS → WARN: only 1 leg produced a review — single-model self-review cannot be a panel PASS`)
+}
+if (verdict === 'PASS' && inconclusiveLegs.length > 0) {
+  verdict = 'WARN'
+  log(`[cap] PASS → WARN: ${inconclusiveLegs.length} leg(s) reported INCONCLUSIVE — an unrun check is not a passed check`)
+}
+// evidenceTier tells a downstream gate how much this verdict is worth, which PASS/WARN/FAIL alone cannot.
+const evidenceTier = quorumFail ? 'unverified'
+                   : (degraded || singleLegCap || inconclusiveLegs.length > 0) ? 'degraded'
+                   : 'full'
+log(`Triage: ${mode} scores=${JSON.stringify(scores)} legs=${usableLegs.length}/${expected} combined=${combined.toFixed(1)}${degraded ? ' (degraded)' : ''} evidence=${evidenceTier} → ${verdict}`)
 
 // Plateau detection — root-cause: B3 — _a?.prevScore safe access
 if (_a?.prevScore !== undefined) {
@@ -559,6 +634,9 @@ return {
   slug, mode,
   combined: parseFloat(combined.toFixed(1)),
   verdict, scores, hasCrit, hasHigh, degraded, quorumFail,
+  evidenceTier, groupthink,
+  legsScored: usableLegs.length, legsExpected: expected,
+  legsExcluded: excludedLegs.map(r => ({ worker: r.worker, reason: _legInconclusive(r) ? _inconclusiveReason(r) : (r._error ? 'error' : 'empty') })),
   structuralRisk: structuralCtx?.risk_level,
   results,
   dedupedIssues,
